@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CARRETTO MUSICALE - MUSIC ENGINE (VERSIONE CORRETTA)
+CARRETTO MUSICALE - MUSIC ENGINE (VERSIONE FIXED)
 Autore: Michele Pietravalle
 Data: 2025-06-15
-Versione: 2.9
+Versione: 3.1
 
-Questo modulo gestisce la comunicazione con SuperCollider via OSC.
-Versione corretta per gestire i messaggi OSC appropriatamente.
+Modulo per il controllo di SuperCollider via OSC.
+Questa versione include fix specifici per assicurare la corretta trasmissione dei comandi.
 """
 
 import threading
@@ -19,10 +19,10 @@ class MusicEngine:
     def __init__(self, host="127.0.0.1", port=57120):
         """Inizializza il motore musicale"""
         self.host = host
-        self.port = 57120  # Forza la porta a 57120
+        self.port = port
         
-        print(f"[MUSIC] Inizializzando client OSC su {host}:{self.port}")
-        self.client = udp_client.SimpleUDPClient(host, self.port)
+        print(f"[MUSIC] Inizializzazione client OSC su {host}:{port}")
+        self.client = udp_client.SimpleUDPClient(host, port)
         
         self.running = False
         self.thread = None
@@ -37,11 +37,19 @@ class MusicEngine:
             "speed": 0
         }
         
-        # Valori precedenti per il confronto
+        # Valori precedenti per confronto
         self.prev_values = {}
-        
-        # Valori precedenti dei potenziometri
         self.prev_pots = {}
+        
+        # Debug flag per verificare la comunicazione
+        self.debug_mode = True
+        
+        # Test iniziale esplicito
+        try:
+            print("[MUSIC] Invio test iniziale esplicito...")
+            self.client.send_message("/test", 1)
+        except Exception as e:
+            print(f"[MUSIC] Errore test iniziale: {e}")
     
     def start(self):
         """Avvia il thread di aggiornamento"""
@@ -53,13 +61,21 @@ class MusicEngine:
             
             print("[MUSIC] Thread di aggiornamento avviato")
             
-            # Test di connessione iniziale
+            # Invia comandi iniziali espliciti
             try:
-                # Invia un intero come richiesto dal protocollo OSC
+                # Sequenza iniziale per assicurarsi che tutto funzioni
+                print("[MUSIC] Invio sequenza iniziale...")
+                time.sleep(0.1)
                 self.client.send_message("/test", 1)
-                print("[MUSIC] Test di connessione inviato")
+                time.sleep(0.1)
+                self.client.send_message("/carretto/volume", 0.8)
+                time.sleep(0.1)
+                self.client.send_message("/carretto/pattern", "dub")
+                time.sleep(0.1)
+                self.client.send_message("/carretto/patternIdx", 0)
+                print("[MUSIC] Sequenza iniziale completata")
             except Exception as e:
-                print(f"[MUSIC] Errore test connessione: {e}")
+                print(f"[MUSIC] Errore sequenza iniziale: {e}")
     
     def stop(self):
         """Ferma il thread di aggiornamento"""
@@ -68,159 +84,143 @@ class MusicEngine:
             self.thread.join(timeout=1.0)
         print("[MUSIC] Thread di aggiornamento arrestato")
     
+    def _send_osc_message(self, address, value):
+        """Funzione helper per inviare messaggi OSC con gestione degli errori"""
+        try:
+            self.client.send_message(address, value)
+            if self.debug_mode:
+                print(f"[MUSIC] Inviato: {address} = {value}")
+            return True
+        except Exception as e:
+            print(f"[MUSIC] Errore invio {address}: {e}")
+            return False
+    
     def update(self, pots, gps):
         """
         Aggiorna i valori correnti in base ai potenziometri e al GPS
-        Versione corretta con i tipi appropriati
+        
+        Args:
+            pots: Dizionario con i valori dei potenziometri
+            gps: Dizionario con i dati GPS
         """
-        # Rileva se qualche potenziometro è cambiato
-        pots_changed = False
-        for key, value in pots.items():
-            if key not in self.prev_pots or abs(value - self.prev_pots[key]) > 0.02:
-                pots_changed = True
-                print(f"[MUSIC] Potenziometro {key} cambiato: {value:.2f} (era: {self.prev_pots.get(key, 0):.2f})")
+        # IMPORTANTE: Invia sempre un comando di test per mantenere attiva la connessione
+        self._send_osc_message("/test", 1)
         
-        # Se nessun potenziometro è cambiato, non fare nulla
-        if not pots_changed:
-            return
-        
-        # Aggiorna i valori precedenti dei potenziometri
-        self.prev_pots = pots.copy()
+        # Elabora tutti i potenziometri, anche se non sono cambiati significativamente
+        # Questo assicura che i comandi vengano inviati anche se i potenziometri
+        # non cambiano molto ma vengono comunque spostati
         
         # VOLUME (pot1)
         if 'pot1' in pots:
-            volume = pots['pot1']
-            self.current_values["volume"] = volume
-            print(f"[MUSIC] Volume aggiornato a {volume:.2f}")
+            volume = float(pots['pot1'])
             
-            # Invia immediatamente il comando volume come float
-            try:
-                self.client.send_message("/carretto/volume", float(volume))
-                print(f"[MUSIC] Comando volume inviato: {volume:.2f}")
-            except Exception as e:
-                print(f"[MUSIC] Errore invio volume: {e}")
+            # Manda esplicitamente come float
+            self._send_osc_message("/carretto/volume", volume)
+            self.current_values["volume"] = volume
+            
+            # Forza un refresh del volume master
+            self._send_osc_message("/carretto/volume", volume)
         
         # BPM (pot2)
         if 'pot2' in pots:
             # Mappa 0-1 a 60-180 BPM
-            bpm = 60 + (pots['pot2'] * 120)
-            self.current_values["bpm"] = bpm
-            print(f"[MUSIC] BPM aggiornato a {bpm:.1f}")
+            bpm = 60.0 + (float(pots['pot2']) * 120.0)
             
-            # Invia immediatamente il comando BPM come float
-            try:
-                self.client.send_message("/carretto/bpm", float(bpm))
-                print(f"[MUSIC] Comando BPM inviato: {bpm:.1f}")
-            except Exception as e:
-                print(f"[MUSIC] Errore invio BPM: {e}")
+            # Manda esplicitamente come float
+            self._send_osc_message("/carretto/bpm", bpm)
+            self.current_values["bpm"] = bpm
         
         # GENRE (pot3)
         if 'pot3' in pots:
-            # Mappa 0-1 a 7 generi
-            genre_idx = int(pots['pot3'] * 6.99)
+            pot3_value = float(pots['pot3'])
+            
+            # Mappa 0-1 a 7 generi, usando floor per evitare out of range
+            genre_idx = min(int(pot3_value * 6.99), 6)
             genres = ["dub", "techno", "reggae", "house", "drumandbass", "ambient", "random"]
             new_pattern = genres[genre_idx]
             
-            # Se il genere è cambiato, aggiorna
-            if new_pattern != self.current_values["pattern"]:
-                self.current_values["pattern"] = new_pattern
-                print(f"[MUSIC] Genere aggiornato a {new_pattern}")
-                
-                # Invia immediatamente il comando genere come stringa
-                try:
-                    self.client.send_message("/carretto/pattern", new_pattern)
-                    print(f"[MUSIC] Comando pattern inviato: {new_pattern}")
-                except Exception as e:
-                    print(f"[MUSIC] Errore invio pattern: {e}")
+            # Invia sempre il pattern, anche se non è cambiato
+            self._send_osc_message("/carretto/pattern", new_pattern)
+            self.current_values["pattern"] = new_pattern
+            
+            # Invia sempre tune
+            self._send_osc_message("/carretto/tune", pot3_value)
+            self.current_values["tune"] = pot3_value
         
         # PATTERN INDEX (pot4)
         if 'pot4' in pots:
-            # Mappa 0-1 a 0-3 pattern index
-            pattern_idx = int(pots['pot4'] * 3.99)
+            pot4_value = float(pots['pot4'])
             
-            # Se il pattern index è cambiato, aggiorna
-            if pattern_idx != self.current_values["patternIdx"]:
-                self.current_values["patternIdx"] = pattern_idx
-                print(f"[MUSIC] Pattern index aggiornato a {pattern_idx}")
-                
-                # Invia immediatamente il comando pattern index come intero
-                try:
-                    self.client.send_message("/carretto/patternIdx", int(pattern_idx))
-                    print(f"[MUSIC] Comando patternIdx inviato: {pattern_idx}")
-                except Exception as e:
-                    print(f"[MUSIC] Errore invio patternIdx: {e}")
+            # Mappa 0-1 a 0-3 pattern index
+            pattern_idx = min(int(pot4_value * 3.99), 3)
+            
+            # Invia sempre il pattern index, anche se non è cambiato
+            self._send_osc_message("/carretto/patternIdx", pattern_idx)
+            self.current_values["patternIdx"] = pattern_idx
         
-        # GPS
+        # Aggiorna i valori precedenti dei potenziometri
+        self.prev_pots = pots.copy()
+        
+        # GPS - opzionale
         if 'speed' in gps and gps['speed'] is not None:
-            self.current_values["speed"] = gps['speed']
+            speed = float(gps['speed'])
+            self.current_values["speed"] = speed
+            
+            # Invia solo se è cambiata significativamente
+            if abs(speed - self.prev_values.get("speed", 0)) > 0.5:
+                self._send_osc_message("/carretto/speed", speed)
+                self.prev_values["speed"] = speed
     
     def _update_thread(self):
         """Thread che invia ping periodici e test"""
+        last_ping_time = time.time()
         last_test_time = time.time()
         
         while self.running:
             current_time = time.time()
             
-            # Invia un ping ogni 5 secondi
-            if current_time - last_test_time > 5.0:
-                try:
-                    # Invia un intero come richiesto dal protocollo OSC
-                    self.client.send_message("/test", 1)
-                    print("[MUSIC] Test periodico inviato")
-                    last_test_time = current_time
-                except Exception as e:
-                    print(f"[MUSIC] Errore invio test: {e}")
+            # Invia ping ogni 3 secondi
+            if current_time - last_ping_time > 3.0:
+                self._send_osc_message("/carretto/ping", int(current_time))
+                last_ping_time = current_time
+            
+            # Invia test ogni 1 secondo per mantenere attiva la connessione
+            if current_time - last_test_time > 1.0:
+                self._send_osc_message("/test", 1)
+                last_test_time = current_time
             
             # Pausa breve
             time.sleep(0.1)
 
-# Test diretto
+# Per test standalone
 if __name__ == "__main__":
     music = MusicEngine()
     music.start()
     
     try:
-        # Simulazione cambio potenziometri
-        print("\nSimulazione cambio potenziometri:")
+        print("\nTest dei controlli musicali:")
         
-        # Volume (pot1)
-        pots = {'pot1': 0.3, 'pot2': 0.5, 'pot3': 0.0, 'pot4': 0.0}
-        music.update(pots, {})
-        print("Volume impostato a 0.3")
+        # Test volume
+        print("\nTest volume (0.3 -> 1.0)...")
+        music.client.send_message("/carretto/volume", 0.3)
+        time.sleep(2)
+        music.client.send_message("/carretto/volume", 1.0)
         time.sleep(2)
         
-        # Volume alto
-        pots = {'pot1': 1.0, 'pot2': 0.5, 'pot3': 0.0, 'pot4': 0.0}
-        music.update(pots, {})
-        print("Volume impostato a 1.0")
-        time.sleep(2)
+        # Test generi
+        for genre in ["dub", "techno", "reggae", "house", "drumandbass", "ambient"]:
+            print(f"\nTest genere {genre}...")
+            music.client.send_message("/carretto/pattern", genre)
+            time.sleep(3)
+            
+            # Test pattern per ogni genere
+            for idx in range(4):
+                print(f"  Pattern {idx}...")
+                music.client.send_message("/carretto/patternIdx", idx)
+                time.sleep(2)
         
-        # BPM lento
-        pots = {'pot1': 1.0, 'pot2': 0.0, 'pot3': 0.0, 'pot4': 0.0}
-        music.update(pots, {})
-        print("BPM impostato a 60")
-        time.sleep(3)
-        
-        # BPM veloce
-        pots = {'pot1': 1.0, 'pot2': 1.0, 'pot3': 0.0, 'pot4': 0.0}
-        music.update(pots, {})
-        print("BPM impostato a 180")
-        time.sleep(3)
-        
-        # Genere techno
-        pots = {'pot1': 1.0, 'pot2': 0.5, 'pot3': 0.2, 'pot4': 0.0}
-        music.update(pots, {})
-        print("Genere impostato a techno")
-        time.sleep(3)
-        
-        # Pattern index 2
-        pots = {'pot1': 1.0, 'pot2': 0.5, 'pot3': 0.2, 'pot4': 0.5}
-        music.update(pots, {})
-        print("Pattern index impostato a 2")
-        time.sleep(3)
-        
-        print("Test completato")
+        print("\nTest completato!")
     except KeyboardInterrupt:
-        print("Test interrotto")
+        print("\nTest interrotto")
     finally:
         music.stop()
